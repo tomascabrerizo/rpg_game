@@ -1,5 +1,7 @@
 #include <Windows.h>
+#include <Dsound.h>
 #include <stdint.h>
+#include <math.h>
 
 typedef uint8_t  u8;
 typedef uint16_t u16;
@@ -19,6 +21,8 @@ typedef double r64;
 #define global static
 #define internal static
 
+#define PI32 3.14159265359f
+
 global b32 globalRunning;
 global BITMAPINFO globalBitmapInfo;
 global void *globalBackBuffer;
@@ -26,6 +30,130 @@ global int backBufferWidth = 1280;
 global int backBufferHeihgt = 720;
 global int bytesPerPixel = 4;
 global int backBufferPitch = (backBufferWidth*bytesPerPixel); 
+
+global LPDIRECTSOUNDBUFFER globalSecondaryBuffer;
+global DWORD globalSamplesPerSecond = 44100;
+global int globalBytesPerSample = sizeof(i16)*2;
+global int globalSecondaryBufferSize = globalSamplesPerSecond * globalBytesPerSample;
+
+#define DIRECT_SOUND_CREATE(name) HRESULT WINAPI name(LPGUID lpGuid, LPDIRECTSOUND* ppDS, LPUNKNOWN  pUnkOuter )
+typedef DIRECT_SOUND_CREATE(DSoundCreate);
+
+internal void
+Win32WriteSineWave()
+{
+    r32 tSine = 0;
+    int toneHz = 512;
+    int wavePeriod = globalSamplesPerSecond / toneHz;
+    int volume = 500;
+
+    DWORD playCursor;
+    DWORD writeCursor;
+    if(globalSecondaryBuffer->GetCurrentPosition(&playCursor, &writeCursor) == DS_OK)
+    {
+        DWORD bytesToWrite = globalSecondaryBufferSize; 
+        DWORD byteToLock = 0;
+        VOID *audioArea1;
+        DWORD audioArea1Bytes;
+        VOID *audioArea2;
+        DWORD audioArea2Bytes;
+        if(globalSecondaryBuffer->Lock(byteToLock, bytesToWrite, 
+            &audioArea1, &audioArea1Bytes, 
+            &audioArea2, &audioArea2Bytes, 
+            DSBLOCK_ENTIREBUFFER) == DS_OK)
+        {
+            i16 *byteSample = (i16 *)audioArea1; 
+            DWORD audioArea1Samples = (audioArea1Bytes / globalBytesPerSample);
+            for(DWORD areaIndex = 0; areaIndex < audioArea1Samples; ++areaIndex)
+            {
+                *byteSample++ = (i16)(sinf(tSine) * volume);
+                *byteSample++ = (i16)(sinf(tSine) * volume);
+
+                tSine += 2.0f*PI32*(1.0f/(r32)wavePeriod);
+                if(tSine > 2.0f*PI32)
+                {
+                    tSine -= (2.0f*PI32);
+                }
+            }
+            
+            byteSample = (i16 *)audioArea2;
+            DWORD audioArea2Samples = (audioArea2Bytes / globalBytesPerSample);
+            for(DWORD areaIndex = 0; areaIndex < audioArea2Samples; ++areaIndex)
+            {
+                *byteSample++ = (i16)(sinf(tSine) * volume);
+                *byteSample++ = (i16)(sinf(tSine) * volume);
+
+                tSine += 2.0f*PI32*(1.0f/(r32)wavePeriod);
+                if(tSine > 2.0f*PI32)
+                {
+                    tSine -= (2.0f*PI32);
+                }
+            }
+
+            globalSecondaryBuffer->Unlock(audioArea1, audioArea1Bytes, audioArea2, audioArea2Bytes);
+        }
+    }
+}
+
+internal void
+Win32LoadDirectSound(HWND window, DWORD samplesPerSecond, DWORD bufferSize)
+{
+    HMODULE directSoundLibrary = LoadLibraryA("dsound.dll");
+    if(directSoundLibrary)
+    {
+        DSoundCreate *DirectSoundCreate = 
+            (DSoundCreate *)GetProcAddress(directSoundLibrary, "DirectSoundCreate");
+        
+        LPDIRECTSOUND DirectSound;
+        if(DirectSoundCreate && (DirectSoundCreate(0, &DirectSound, 0) == DS_OK))
+        {
+            if(DirectSound->SetCooperativeLevel(window, DSSCL_PRIORITY) == DS_OK)
+            {
+                WAVEFORMATEX waveFormat = {};
+                waveFormat.wFormatTag = WAVE_FORMAT_PCM;
+                waveFormat.nChannels = 2;
+                waveFormat.nSamplesPerSec = samplesPerSecond;
+                waveFormat.wBitsPerSample = 16;
+                waveFormat.nBlockAlign = (waveFormat.nChannels * waveFormat.wBitsPerSample/8);
+                waveFormat.nAvgBytesPerSec = (waveFormat.nSamplesPerSec * waveFormat.nBlockAlign);
+
+                DSBUFFERDESC primaryBufferDescription = {};
+                primaryBufferDescription.dwSize = sizeof(primaryBufferDescription);
+                primaryBufferDescription.dwFlags = DSBCAPS_PRIMARYBUFFER;
+
+                LPDIRECTSOUNDBUFFER primaryBuffer;
+                if(DirectSound->CreateSoundBuffer(&primaryBufferDescription, &primaryBuffer, 0) == DS_OK)
+                {
+                    primaryBuffer->SetFormat(&waveFormat);
+                    OutputDebugString("DSOUND: Primary Buffer Created\n");
+                }
+                
+                DSBUFFERDESC secondaryBufferDescription = {};
+                secondaryBufferDescription.dwSize = sizeof(secondaryBufferDescription);
+                secondaryBufferDescription.dwFlags = 0;
+                secondaryBufferDescription.dwBufferBytes = bufferSize;
+                secondaryBufferDescription.lpwfxFormat = &waveFormat;
+                if(DirectSound->CreateSoundBuffer(&secondaryBufferDescription, &globalSecondaryBuffer, 0) == DS_OK)
+                {
+                    OutputDebugString("DSOUND: Secondary Buffer Created\n");
+                }
+            }
+            else
+            {
+                // TODO: Log error message!
+            }
+        }
+        else
+        {
+            // TODO: Log error message!
+        }
+
+    }
+    else
+    {
+        // TODO: Log error message!
+    }
+}
 
 internal void
 Win32DrawBackBufferPatron(void *backBuffer, int width, int height)
@@ -136,6 +264,12 @@ int CALLBACK WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR pCmdLin
     {
         // TODO: Maybe make the device context global if it needed
         HDC deviceContext = GetDC(window);
+        
+        Win32LoadDirectSound(window, globalSamplesPerSecond, globalSecondaryBufferSize);
+        
+        Win32WriteSineWave();
+        globalSecondaryBuffer->Play(0, 0, DSBPLAY_LOOPING);
+
         Win32CreateBackBuffer(&globalBackBuffer, backBufferWidth, backBufferHeihgt);
         
         globalRunning = true;
