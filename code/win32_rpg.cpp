@@ -90,7 +90,10 @@ Win32WriteSineWave()
                 }
             }
 
-            globalSecondaryBuffer->Unlock(audioArea1, audioArea1Bytes, audioArea2, audioArea2Bytes);
+            if(globalSecondaryBuffer->Unlock(audioArea1, audioArea1Bytes, audioArea2, audioArea2Bytes) == DS_OK)
+            {
+                int breakHere = 0;
+            }
         }
     }
 }
