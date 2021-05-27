@@ -373,17 +373,18 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR pCmdLine, int nCmdSh
                     runningSampleIndex = writeCursor / globalBytesPerSample;
                     firstSoundWrite = false;
                 }
-                //DWORD bytesToWrite =  (DWORD)((globalSamplesPerSecond * globalBytesPerSample) * targetSecPerFrame)*1;
                 DWORD byteToLock = (runningSampleIndex * globalBytesPerSample) % globalSecondaryBufferSize;
                 DWORD bytesToWrite = 0; 
-                if(byteToLock > playCursor)
+                DWORD targetCursor = writeCursor + 
+                    (DWORD)((r32)(globalSamplesPerSecond * globalBytesPerSample) / monitorHz);
+                if(byteToLock > targetCursor)
                 {
                     bytesToWrite = globalSecondaryBufferSize - byteToLock;
-                    bytesToWrite += playCursor;
+                    bytesToWrite += targetCursor;
                 }
-                else if(byteToLock < playCursor)
+                else if(byteToLock < targetCursor)
                 {
-                    bytesToWrite = playCursor - byteToLock;
+                    bytesToWrite = targetCursor - byteToLock;
                 }
  
                 VOID *audioArea1;
@@ -445,9 +446,8 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR pCmdLine, int nCmdSh
                 for(int index = 0; index < DEBUG_FRAMES; ++index)
                 {
                     Win32DebugDrawRect(80 + byteToLockPosition[index], 220, bytesToWriteWidth[index]  , 160, 0xFFFFFFFF);
-                    //Win32DebugDrawRect(80 + byteToLockPosition[index], 220, 10, 160, 0xFF101010);
-                    //Win32DebugDrawRect(80 + writeCursorPosition[index], 220, 10, 160, 0xFF00FF00);
-                    //Win32DebugDrawRect(80 + playCursorPosition[index], 220, 10, 160, 0xFFFF0000);
+                    Win32DebugDrawRect(80 + writeCursorPosition[index], 220, 2, 160, 0xFF00FF00);
+                    Win32DebugDrawRect(80 + playCursorPosition[index], 220, 2, 160, 0xFFFF0000);
                 }
                 if(++debugIndex == DEBUG_FRAMES)
                 {
