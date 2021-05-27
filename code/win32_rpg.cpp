@@ -376,7 +376,7 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR pCmdLine, int nCmdSh
                 DWORD byteToLock = (runningSampleIndex * globalBytesPerSample) % globalSecondaryBufferSize;
                 DWORD bytesToWrite = 0; 
                 DWORD targetCursor = writeCursor + 
-                    (DWORD)((r32)(globalSamplesPerSecond * globalBytesPerSample) / monitorHz);
+                    (DWORD)((r32)(globalSamplesPerSecond * globalBytesPerSample) / (r32)monitorHz);
                 if(byteToLock > targetCursor)
                 {
                     bytesToWrite = globalSecondaryBufferSize - byteToLock;
@@ -446,8 +446,8 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR pCmdLine, int nCmdSh
                 for(int index = 0; index < DEBUG_FRAMES; ++index)
                 {
                     Win32DebugDrawRect(80 + byteToLockPosition[index], 220, bytesToWriteWidth[index]  , 160, 0xFFFFFFFF);
-                    Win32DebugDrawRect(80 + writeCursorPosition[index], 220, 2, 160, 0xFF00FF00);
-                    Win32DebugDrawRect(80 + playCursorPosition[index], 220, 2, 160, 0xFFFF0000);
+                    //Win32DebugDrawRect(80 + writeCursorPosition[index], 220, 2, 160, 0xFF00FF00);
+                    //Win32DebugDrawRect(80 + playCursorPosition[index], 220, 2, 160, 0xFFFF0000);
                 }
                 if(++debugIndex == DEBUG_FRAMES)
                 {
@@ -461,7 +461,16 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR pCmdLine, int nCmdSh
                         playCursorPosition[index] = {};
                     }
                 }
-
+                
+                DWORD safeWriteCursor = writeCursor;
+                if(safeWriteCursor < playCursor)
+                {
+                    safeWriteCursor += globalSecondaryBufferSize;
+                }
+                r32 audioDelay = (((r32)(safeWriteCursor - playCursor) / (r32)globalBytesPerSample)) / globalSamplesPerSecond;
+                char Buffer[256];
+                sprintf_s(Buffer, "audio delay ms: %f\n", audioDelay*1000.0f);
+                OutputDebugString(Buffer);
             }
 
             
