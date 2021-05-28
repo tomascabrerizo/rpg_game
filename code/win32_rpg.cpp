@@ -339,16 +339,13 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR pCmdLine, int nCmdSh
         QueryPerformanceCounter(&lastTime);
 
         DWORD runningSampleIndex = 0;
-        DWORD lastWriteCursor = 0;
+        DWORD lastPlayCursor = 0;
+        DWORD lastTargetCursor = 0;
         b32 firstSoundWrite = true;
 #define DEBUG_FRAMES 30
         int byteToLockPosition[DEBUG_FRAMES] = {};
         int bytesToWriteWidth[DEBUG_FRAMES] = {};
-        int writeCursorPosition[DEBUG_FRAMES] = {};
-        int playCursorPosition[DEBUG_FRAMES] = {};
         int debugIndex = 0;
-        DWORD lastWriteCursorMovementBytes = 0;
-        DWORD frameCounter = 0;
         
         r32 tSine = 0;
         int toneHz = 512;
@@ -367,10 +364,33 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR pCmdLine, int nCmdSh
              
             DWORD playCursor;
             DWORD writeCursor;
-            DWORD bytesToWrite = (DWORD)((r32)globalSecondaryBufferSize * (targetSecPerFrame));
             if(globalSecondaryBuffer->GetCurrentPosition(&playCursor, &writeCursor) == DS_OK)
             {
-                DWORD byteToLock = (frameCounter*bytesToWrite) % globalSecondaryBufferSize;
+                DWORD safeBytes = 0;
+                DWORD safeWriteCursor = writeCursor;
+                if(safeWriteCursor < playCursor)
+                {
+                    safeWriteCursor += globalSecondaryBufferSize;
+                }
+                if(firstSoundWrite)
+                {
+                    runningSampleIndex = writeCursor/globalBytesPerSample;
+                    firstSoundWrite = false;
+                }
+                DWORD byteToLock = (runningSampleIndex*globalBytesPerSample) % globalSecondaryBufferSize;
+                DWORD targetCursor = writeCursor + 
+                    (DWORD)((r32)globalSecondaryBufferSize * (targetSecPerFrame*3)) + safeBytes;
+                DWORD bytesToWrite = 0;
+                if(byteToLock > targetCursor)
+                {
+                    bytesToWrite = (globalSecondaryBufferSize - byteToLock);
+                    bytesToWrite += playCursor;
+                }
+                else if(byteToLock < targetCursor)
+                {
+                    bytesToWrite = targetCursor - byteToLock;
+                }
+
                 VOID *audioArea1;
                 DWORD audioArea1Bytes;
                 VOID *audioArea2;
@@ -392,6 +412,7 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR pCmdLine, int nCmdSh
                         {
                             tSine -= (2.0f*PI32);
                         }
+                        ++runningSampleIndex;
                     }
 
                     byteSample = (i16 *)audioArea2;
@@ -406,6 +427,7 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR pCmdLine, int nCmdSh
                         {
                             tSine -= (2.0f*PI32);
                         }
+                        ++runningSampleIndex;
                     }
                     
                     globalSecondaryBuffer->Unlock(audioArea1, audioArea1Bytes, audioArea2, audioArea2Bytes);
@@ -419,8 +441,6 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR pCmdLine, int nCmdSh
 
                 byteToLockPosition[debugIndex] =  (int)(ratio * (r32)byteToLock);
                 bytesToWriteWidth[debugIndex] = (int)(ratio * (r32)bytesToWrite);
-                writeCursorPosition[debugIndex] = (int)(ratio * (r32)writeCursor);
-                playCursorPosition[debugIndex] = (int)(ratio * (r32)playCursor);
                 
                 Win32DrawBackBufferPatron(globalBackBuffer, backBufferWidth, backBufferHeihgt);
                 Win32DebugDrawRect(80, 200, secondaryBufferWidth, secondaryBufferHeight, 0xFF999999);
@@ -428,9 +448,9 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR pCmdLine, int nCmdSh
                 for(int index = 0; index < DEBUG_FRAMES; ++index)
                 {
                     Win32DebugDrawRect(80 + byteToLockPosition[index], 220, bytesToWriteWidth[index]  , 160, 0xFFFFFFFF);
-                    //Win32DebugDrawRect(80 + writeCursorPosition[index], 220, 2, 160, 0xFF00FF00);
-                    //Win32DebugDrawRect(80 + playCursorPosition[index], 220, 2, 160, 0xFFFF0000);
                 }
+                Win32DebugDrawRect(80 +(int)(ratio * (r32)playCursor), 220, 10, 160, 0xFFFF0000);
+                Win32DebugDrawRect(80 +(int)(ratio * (r32)writeCursor), 220, 10, 160, 0xFF00FF00);
                 if(++debugIndex == DEBUG_FRAMES)
                 {
                     debugIndex = 0;
@@ -439,8 +459,6 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR pCmdLine, int nCmdSh
                     {
                         byteToLockPosition[index] = {};
                         bytesToWriteWidth[index] = {};
-                        writeCursorPosition[index] = {};
-                        playCursorPosition[index] = {};
                     }
                 }
                 #if 0
@@ -456,19 +474,16 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR pCmdLine, int nCmdSh
                     //OutputDebugString(Buffer);
                 }
                 {
-                    DWORD safeWriteCursor = writeCursor;
-                    if(writeCursor < lastWriteCursor)
+                    DWORD safePlayCursor = playCursor;
+                    if(playCursor < lastPlayCursor)
                     {
-                        safeWriteCursor += globalSecondaryBufferSize;
+                        safePlayCursor += globalSecondaryBufferSize;
                     }
-                    DWORD writeCursorMovementBytes = safeWriteCursor - lastWriteCursor;
-                    DWORD writeCursorError = (writeCursorMovementBytes - lastWriteCursorMovementBytes);
-                    lastWriteCursorMovementBytes = writeCursorMovementBytes;
-                    lastWriteCursor = writeCursor;
-                    DWORD writeCursorMovementSamples = writeCursorMovementBytes / globalBytesPerSample;
+                    DWORD playCursorMovementBytes = safePlayCursor - lastPlayCursor;
+                    lastPlayCursor = playCursor;
                     char BufferPWCursor[256];
-                    sprintf_s(BufferPWCursor, "PC: %d, WP: %d, Frame: %d\n", 
-                        playCursor, writeCursorMovementBytes, frameCounter);
+                    sprintf_s(BufferPWCursor, "PlayMove: %d, Frame: %d\n", 
+                        playCursorMovementBytes, frameCounter);
                     OutputDebugString(BufferPWCursor);
                 }
                 #endif
@@ -494,7 +509,6 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR pCmdLine, int nCmdSh
             sprintf_s(Buffer, "ms: %f\n", currentSecPerFrame*1000.0f);
             OutputDebugString(Buffer);
 #endif
-            if(++frameCounter > 30) frameCounter = 0;
         }
 
         ReleaseDC(window, deviceContext);
