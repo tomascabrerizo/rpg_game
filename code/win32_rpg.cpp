@@ -196,6 +196,65 @@ Win32GetSecondsElapsed(LARGE_INTEGER start, LARGE_INTEGER end)
 }
 
 internal void
+Win32FillSoundBuffer(Win32SoundBuffer *soundBuffer, DWORD byteToLock, DWORD bytesToWrite, DWORD *runningSampleIndex)
+{
+
+    // TODO: Take out this from this function
+    static r32 tSine = 0;
+    int toneHz = 255;
+    int wavePeriod = soundBuffer->samplesPerSecond / toneHz;
+    int volume = 2000;
+
+    VOID *audioArea1;
+    DWORD audioArea1Bytes;
+    VOID *audioArea2;
+    DWORD audioArea2Bytes;
+    if(soundBuffer->dsoundBuffer->Lock(byteToLock, bytesToWrite, 
+        &audioArea1, &audioArea1Bytes, 
+        &audioArea2, &audioArea2Bytes, 
+        0) == DS_OK)
+    {
+        i16 *byteSample = (i16 *)audioArea1;
+        DWORD audioArea1Samples = (audioArea1Bytes / soundBuffer->bytesPerSample);
+        for(DWORD areaIndex = 0; areaIndex < audioArea1Samples; ++areaIndex)
+        {
+        // TODO: Re enable this code to copy a sound buffer from the game
+        #if 1
+            *byteSample++ = (i16)(sinf(tSine) * volume);
+            *byteSample++ = (i16)(sinf(tSine) * volume);
+
+            tSine += 2.0f*PI32*(1.0f/(r32)wavePeriod);
+            if(tSine > 2.0f*PI32)
+            {
+                tSine -= (2.0f*PI32);
+            }
+        #endif
+            ++*runningSampleIndex;
+        }
+
+        byteSample = (i16 *)audioArea2;
+        DWORD audioArea2Samples = (audioArea2Bytes / soundBuffer->bytesPerSample);
+        for(DWORD areaIndex = 0; areaIndex < audioArea2Samples; ++areaIndex)
+        {
+        // TODO: Re enable this code to copy a sound buffer from the game
+        #if 1
+            *byteSample++ = (i16)(sinf(tSine) * volume);
+            *byteSample++ = (i16)(sinf(tSine) * volume);
+
+            tSine += 2.0f*PI32*(1.0f/(r32)wavePeriod);
+            if(tSine > 2.0f*PI32)
+            {
+                tSine -= (2.0f*PI32);
+            }
+        #endif
+            ++*runningSampleIndex;
+        }
+        
+        soundBuffer->dsoundBuffer->Unlock(audioArea1, audioArea1Bytes, audioArea2, audioArea2Bytes);
+    }
+}
+
+internal void
 Win32DebugDrawRect(Win32BackBuffer *backBuffer, int x, int y, int width, int height, u32 color)
 {
     int minX = x;
@@ -308,10 +367,6 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR pCmdLine, int nCmdSh
     win32WindowClass.style = CS_HREDRAW|CS_VREDRAW|CS_OWNDC;
     win32WindowClass.lpfnWndProc = Win32WindowsProc;
     win32WindowClass.hInstance = hInstance;
-    //win32WindowClass.hIcon = 0;
-    //win32WindowClass.hCursor = 0;
-    //win32WindowClass.hbrBackground = 0;
-    //win32WindowClass.lpszMenuName = 0;
     win32WindowClass.lpszClassName = "win32WindowClassName";
 
     RegisterClassA(&win32WindowClass);
@@ -358,10 +413,6 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR pCmdLine, int nCmdSh
         DWORD runningSampleIndex = 0;
         b32 firstSoundWrite = true;
 
-        r32 tSine = 0;
-        int toneHz = 255;
-        int wavePeriod = globalSecondaryBuffer.samplesPerSecond / toneHz;
-        int volume = 500;
         Win32SoundDebugInfo DEBUGSoundInfo = {};
         
         Input newInput = {};
@@ -388,19 +439,23 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR pCmdLine, int nCmdSh
                         {
                             if(VKCode == 'W')
                             {
-                                newInput.keyW.isDown = isDown;
+                                newInput.W.isDown = isDown;
                             }
                             if(VKCode == 'S')
                             {
-                                newInput.keyS.isDown = isDown;
+                                newInput.S.isDown = isDown;
                             }
                             if(VKCode == 'A')
                             {
-                                newInput.keyA.isDown = isDown;
+                                newInput.A.isDown = isDown;
                             }
                             if(VKCode == 'D')
                             {
-                                newInput.keyD.isDown = isDown;
+                                newInput.D.isDown = isDown;
+                            }
+                            if(VKCode == VK_SPACE)
+                            {
+                                newInput.Space.isDown = isDown;
                             }
                         }
 
@@ -413,29 +468,26 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR pCmdLine, int nCmdSh
                 }
             }
 
-            Win32ProcessKeyboard(&newInput.keyW, &oldInput.keyW);
-            Win32ProcessKeyboard(&newInput.keyS, &oldInput.keyS);
-            Win32ProcessKeyboard(&newInput.keyA, &oldInput.keyA);
-            Win32ProcessKeyboard(&newInput.keyD, &oldInput.keyD);
+            Win32ProcessKeyboard(&newInput.W, &oldInput.W);
+            Win32ProcessKeyboard(&newInput.S, &oldInput.S);
+            Win32ProcessKeyboard(&newInput.A, &oldInput.A);
+            Win32ProcessKeyboard(&newInput.D, &oldInput.D);
+            Win32ProcessKeyboard(&newInput.Space, &oldInput.Space);
+            
+            // TODO: Get mouse position and mouse buttons here
+            // Use keyboard state for simplicity
 
             DWORD playCursor;
             DWORD writeCursor;
             if(globalSecondaryBuffer.dsoundBuffer->GetCurrentPosition(&playCursor, &writeCursor) == DS_OK)
             {
-                DWORD safeBytes = 0;
-                DWORD safeWriteCursor = writeCursor;
-                if(safeWriteCursor < playCursor)
-                {
-                    safeWriteCursor += globalSecondaryBuffer.size;
-                }
                 if(firstSoundWrite)
                 {
                     runningSampleIndex = writeCursor/globalSecondaryBuffer.bytesPerSample;
                     firstSoundWrite = false;
                 }
                 DWORD byteToLock = (runningSampleIndex*globalSecondaryBuffer.bytesPerSample) % globalSecondaryBuffer.size;
-                DWORD targetCursor = writeCursor + 
-                    (DWORD)((r32)globalSecondaryBuffer.size * (targetSecPerFrame*3)) + safeBytes;
+                DWORD targetCursor = writeCursor + (DWORD)((r32)globalSecondaryBuffer.size * (targetSecPerFrame*3));
                 DWORD bytesToWrite = 0;
                 if(byteToLock > targetCursor)
                 {
@@ -446,71 +498,23 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR pCmdLine, int nCmdSh
                 {
                     bytesToWrite = targetCursor - byteToLock;
                 }
-        
-                VOID *audioArea1;
-                DWORD audioArea1Bytes;
-                VOID *audioArea2;
-                DWORD audioArea2Bytes;
-                if(globalSecondaryBuffer.dsoundBuffer->Lock(byteToLock, bytesToWrite, 
-                    &audioArea1, &audioArea1Bytes, 
-                    &audioArea2, &audioArea2Bytes, 
-                    0) == DS_OK)
-                {
-                    i16 *byteSample = (i16 *)audioArea1;
-                    DWORD audioArea1Samples = (audioArea1Bytes / globalSecondaryBuffer.bytesPerSample);
-                    for(DWORD areaIndex = 0; areaIndex < audioArea1Samples; ++areaIndex)
-                    {
-                    // TODO: Re enable this code to copy a sound buffer from the game
-                    #if 0
-                        *byteSample++ = (i16)(sinf(tSine) * volume);
-                        *byteSample++ = (i16)(sinf(tSine) * volume);
-
-                        tSine += 2.0f*PI32*(1.0f/(r32)wavePeriod);
-                        if(tSine > 2.0f*PI32)
-                        {
-                            tSine -= (2.0f*PI32);
-                        }
-                    #endif
-                        ++runningSampleIndex;
-                    }
-
-                    byteSample = (i16 *)audioArea2;
-                    DWORD audioArea2Samples = (audioArea2Bytes / globalSecondaryBuffer.bytesPerSample);
-                    for(DWORD areaIndex = 0; areaIndex < audioArea2Samples; ++areaIndex)
-                    {
-                    // TODO: Re enable this code to copy a sound buffer from the game
-                    #if 0
-                        *byteSample++ = (i16)(sinf(tSine) * volume);
-                        *byteSample++ = (i16)(sinf(tSine) * volume);
-
-                        tSine += 2.0f*PI32*(1.0f/(r32)wavePeriod);
-                        if(tSine > 2.0f*PI32)
-                        {
-                            tSine -= (2.0f*PI32);
-                        }
-                    #endif
-                        ++runningSampleIndex;
-                    }
-                    
-                    globalSecondaryBuffer.dsoundBuffer->Unlock(audioArea1, audioArea1Bytes, audioArea2, audioArea2Bytes);
-                }
+                Win32FillSoundBuffer(&globalSecondaryBuffer, byteToLock, bytesToWrite, &runningSampleIndex);
                 Win32DrawBackBufferPatron(&globalBackBuffer);
                 Win32DrawSoundDebufInfo(&DEBUGSoundInfo, byteToLock, bytesToWrite, playCursor, writeCursor);
-                
-                // TODO: Move this code to a DEBUG function
             }
+            
            
             // TODO: Remove this keyboard test
             {
-                if(newInput.keyA.wasPress)
+                if(newInput.A.wasPress)
                 {
                     OutputDebugString("A was Press\n");
                 }
-                if(newInput.keyA.wasRelease)
+                if(newInput.A.wasRelease)
                 {
                     OutputDebugString("A was Release\n");
                 }
-                if(newInput.keyA.isDown)
+                if(newInput.A.isDown)
                 {
                     OutputDebugString("A is down\n");
                 }

@@ -63,10 +63,11 @@ struct Key
 
 struct Input
 {
-    Key keyW;
-    Key keyS;
-    Key keyA;
-    Key keyD;
+    Key W;
+    Key S;
+    Key A;
+    Key D;
+    Key Space; 
 };
 
 #endif //WIN32_RPG_H
