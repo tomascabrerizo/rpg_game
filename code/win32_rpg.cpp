@@ -195,35 +195,6 @@ Win32GetSecondsElapsed(LARGE_INTEGER start, LARGE_INTEGER end)
     return result;
 }
 
-internal LRESULT CALLBACK 
-Win32WindowsProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
-{
-
-    LRESULT result = 0;
-    
-    switch(uMsg)
-    {
-        case WM_CREATE:
-        {
-
-        }break;
-        case WM_SIZE:
-        {
-
-        }break;
-        case WM_CLOSE:
-        {
-            globalRunning = false;
-        }break;
-        default: 
-        {
-            result = DefWindowProc(hwnd, uMsg, wParam, lParam);
-        }break;
-    }
-
-    return result;
-}
-
 internal void
 Win32DebugDrawRect(Win32BackBuffer *backBuffer, int x, int y, int width, int height, u32 color)
 {
@@ -295,6 +266,41 @@ Win32DrawSoundDebufInfo(Win32SoundDebugInfo *info, DWORD byteToLock, DWORD bytes
     }
 }
 
+internal void
+Win32ProcessKeyboard(Key *newKey, Key *oldKey)
+{
+    newKey->wasPress = (newKey->isDown && !oldKey->isDown);
+    newKey->wasRelease = (!newKey->isDown && oldKey->isDown);
+}
+
+internal LRESULT CALLBACK 
+Win32WindowsProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
+{
+    LRESULT result = 0;
+    
+    switch(uMsg)
+    {
+        case WM_CREATE:
+        {
+
+        }break;
+        case WM_SIZE:
+        {
+
+        }break;
+        case WM_CLOSE:
+        {
+            globalRunning = false;
+        }break;
+        default: 
+        {
+            result = DefWindowProc(hwnd, uMsg, wParam, lParam);
+        }break;
+    }
+
+    return result;
+}
+
 int CALLBACK 
 WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR pCmdLine, int nCmdShow)
 {
@@ -358,16 +364,60 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR pCmdLine, int nCmdSh
         int volume = 500;
         Win32SoundDebugInfo DEBUGSoundInfo = {};
         
+        Input newInput = {};
+        Input oldInput = {};
         globalRunning = true;
         while(globalRunning)
         {
+            oldInput = newInput;
+
             MSG message;
             while(PeekMessage(&message, window, 0, 0, PM_REMOVE))
             {
-                TranslateMessage(&message); 
-                DispatchMessage(&message); 
+                switch(message.message)
+                {
+                    case WM_SYSKEYDOWN:
+                    case WM_KEYDOWN:
+                    case WM_SYSKEYUP:
+                    case WM_KEYUP:
+                    {
+                        u32 VKCode = (u32)message.wParam;
+                        b32 isDown = ((message.lParam & (1 << 31)) == 0);
+                        b32 wasDown = ((message.lParam & (1 << 30)) != 0);
+                        if(isDown != wasDown)
+                        {
+                            if(VKCode == 'W')
+                            {
+                                newInput.keyW.isDown = isDown;
+                            }
+                            if(VKCode == 'S')
+                            {
+                                newInput.keyS.isDown = isDown;
+                            }
+                            if(VKCode == 'A')
+                            {
+                                newInput.keyA.isDown = isDown;
+                            }
+                            if(VKCode == 'D')
+                            {
+                                newInput.keyD.isDown = isDown;
+                            }
+                        }
+
+                    }break;
+                    default:
+                    {
+                        TranslateMessage(&message); 
+                        DispatchMessage(&message); 
+                    }break;
+                }
             }
-             
+
+            Win32ProcessKeyboard(&newInput.keyW, &oldInput.keyW);
+            Win32ProcessKeyboard(&newInput.keyS, &oldInput.keyS);
+            Win32ProcessKeyboard(&newInput.keyA, &oldInput.keyA);
+            Win32ProcessKeyboard(&newInput.keyD, &oldInput.keyD);
+
             DWORD playCursor;
             DWORD writeCursor;
             if(globalSecondaryBuffer.dsoundBuffer->GetCurrentPosition(&playCursor, &writeCursor) == DS_OK)
@@ -396,7 +446,7 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR pCmdLine, int nCmdSh
                 {
                     bytesToWrite = targetCursor - byteToLock;
                 }
-
+        
                 VOID *audioArea1;
                 DWORD audioArea1Bytes;
                 VOID *audioArea2;
@@ -449,7 +499,23 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR pCmdLine, int nCmdSh
                 
                 // TODO: Move this code to a DEBUG function
             }
-            
+           
+            // TODO: Remove this keyboard test
+            {
+                if(newInput.keyA.wasPress)
+                {
+                    OutputDebugString("A was Press\n");
+                }
+                if(newInput.keyA.wasRelease)
+                {
+                    OutputDebugString("A was Release\n");
+                }
+                if(newInput.keyA.isDown)
+                {
+                    OutputDebugString("A is down\n");
+                }
+            }
+
             // TODO: Probably get the target secons per frame from this calculation
             LARGE_INTEGER currentTime = Win32GetWallClock();
             r32 currentSecPerFrame = Win32GetSecondsElapsed(lastTime, currentTime); 
@@ -464,6 +530,7 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR pCmdLine, int nCmdSh
             lastTime.QuadPart = currentTime.QuadPart;
             
             Win32UpdateBackBuffer(deviceContext, &globalBackBuffer);
+
 #if 0
             char Buffer[64];
             sprintf_s(Buffer, "ms: %f\n", currentSecPerFrame*1000.0f);

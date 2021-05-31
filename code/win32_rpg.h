@@ -54,4 +54,19 @@ struct Win32SoundDebugInfo
     int debugIndex;
 };
 
+struct Key
+{
+    b32 wasPress;
+    b32 wasRelease;
+    b32 isDown;
+};
+
+struct Input
+{
+    Key keyW;
+    Key keyS;
+    Key keyA;
+    Key keyD;
+};
+
 #endif //WIN32_RPG_H
