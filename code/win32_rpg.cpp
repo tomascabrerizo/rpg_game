@@ -1,3 +1,6 @@
+#include "rpg.h"
+#include "rpg.cpp"
+
 #include "win32_rpg.h"
 
 global b32 globalRunning;
@@ -129,23 +132,6 @@ Win32LoadDirectSound(HWND window, Win32SoundBuffer *soundBuffer, DWORD samplesPe
 }
 
 internal void
-Win32DrawBackBufferPatron(Win32BackBuffer *backBuffer)
-{
-    u8 *row = (u8 *)backBuffer->memory; 
-    for(int y = 0; y < backBuffer->height; ++y)
-    {
-        u32 *pixel = (u32 *)row;
-        for(int x = 0; x < backBuffer->width; ++x)
-        {
-            u8 color0 = (u8)x;
-            u8 color1 = (u8)y;
-            *pixel++ =  (u32)(color0 | (color1 << 0)); 
-        }
-        row += backBuffer->pitch;
-    }
-}
-
-internal void
 Win32CreateBackBuffer(Win32BackBuffer *backBuffer, int width, int height)
 {
     backBuffer->width = width;
@@ -196,15 +182,9 @@ Win32GetSecondsElapsed(LARGE_INTEGER start, LARGE_INTEGER end)
 }
 
 internal void
-Win32FillSoundBuffer(Win32SoundBuffer *soundBuffer, DWORD byteToLock, DWORD bytesToWrite, DWORD *runningSampleIndex)
+Win32FillSoundBuffer(Win32SoundBuffer *soundBuffer, DWORD byteToLock, DWORD bytesToWrite, 
+    SoundBuffer *srcBuffer, DWORD *runningSampleIndex)
 {
-
-    // TODO: Take out this from this function
-    static r32 tSine = 0;
-    int toneHz = 255;
-    int wavePeriod = soundBuffer->samplesPerSecond / toneHz;
-    int volume = 2000;
-
     VOID *audioArea1;
     DWORD audioArea1Bytes;
     VOID *audioArea2;
@@ -214,21 +194,15 @@ Win32FillSoundBuffer(Win32SoundBuffer *soundBuffer, DWORD byteToLock, DWORD byte
         &audioArea2, &audioArea2Bytes, 
         0) == DS_OK)
     {
+        i16 *srcSoundBuffer = (i16 *)srcBuffer->memory;
+
         i16 *byteSample = (i16 *)audioArea1;
         DWORD audioArea1Samples = (audioArea1Bytes / soundBuffer->bytesPerSample);
         for(DWORD areaIndex = 0; areaIndex < audioArea1Samples; ++areaIndex)
         {
-        // TODO: Re enable this code to copy a sound buffer from the game
-        #if 1
-            *byteSample++ = (i16)(sinf(tSine) * volume);
-            *byteSample++ = (i16)(sinf(tSine) * volume);
+            *byteSample++ = *srcSoundBuffer++;
+            *byteSample++ = *srcSoundBuffer++;
 
-            tSine += 2.0f*PI32*(1.0f/(r32)wavePeriod);
-            if(tSine > 2.0f*PI32)
-            {
-                tSine -= (2.0f*PI32);
-            }
-        #endif
             ++*runningSampleIndex;
         }
 
@@ -236,17 +210,9 @@ Win32FillSoundBuffer(Win32SoundBuffer *soundBuffer, DWORD byteToLock, DWORD byte
         DWORD audioArea2Samples = (audioArea2Bytes / soundBuffer->bytesPerSample);
         for(DWORD areaIndex = 0; areaIndex < audioArea2Samples; ++areaIndex)
         {
-        // TODO: Re enable this code to copy a sound buffer from the game
-        #if 1
-            *byteSample++ = (i16)(sinf(tSine) * volume);
-            *byteSample++ = (i16)(sinf(tSine) * volume);
-
-            tSine += 2.0f*PI32*(1.0f/(r32)wavePeriod);
-            if(tSine > 2.0f*PI32)
-            {
-                tSine -= (2.0f*PI32);
-            }
-        #endif
+            *byteSample++ = *srcSoundBuffer++;
+            *byteSample++ = *srcSoundBuffer++;
+            
             ++*runningSampleIndex;
         }
         
@@ -326,10 +292,11 @@ Win32DrawSoundDebufInfo(Win32SoundDebugInfo *info, DWORD byteToLock, DWORD bytes
 }
 
 internal void
-Win32ProcessKeyboard(Key *newKey, Key *oldKey)
+Win32ProcessKey(Key *key, DWORD isDown, DWORD wasDown)
 {
-    newKey->wasPress = (newKey->isDown && !oldKey->isDown);
-    newKey->wasRelease = (!newKey->isDown && oldKey->isDown);
+    key->wasPress = (isDown && !wasDown);
+    key->wasRelease = (!isDown && wasDown);
+    key->isDown = isDown;
 }
 
 internal LRESULT CALLBACK 
@@ -391,7 +358,7 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR pCmdLine, int nCmdSh
         // TODO: Maybe make the device context global if it needed
         HDC deviceContext = GetDC(window);
         
-        Win32LoadDirectSound(window, &globalSecondaryBuffer,44100);
+        Win32LoadDirectSound(window, &globalSecondaryBuffer, 44100);
         globalSecondaryBuffer.dsoundBuffer->Play(0, 0, DSBPLAY_LOOPING);
         Win32CreateBackBuffer(&globalBackBuffer, 1280, 720);
        
@@ -414,13 +381,35 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR pCmdLine, int nCmdSh
         b32 firstSoundWrite = true;
 
         Win32SoundDebugInfo DEBUGSoundInfo = {};
+
+        // NOTE: Init and create game memory
+        GameMemory gameMemory = {};
+        gameMemory.permanentSize = Megabytes(64);
+        gameMemory.transientSize = 0;
+        memory_index memorySize = gameMemory.permanentSize + gameMemory.transientSize;
+        gameMemory.permanet = VirtualAlloc(0, memorySize, MEM_RESERVE|MEM_COMMIT, PAGE_READWRITE);
+        gameMemory.transient = (u8 *)gameMemory.permanet + gameMemory.permanentSize;
+
+        // NOTE: Init SoundBuffer for pass into the game. This buffer will be copy
+        // into the cicular buffer of direct sound
+        SoundBuffer soundBuffer = {};
+        soundBuffer.samplesPerSecond = globalSecondaryBuffer.samplesPerSecond;
+        soundBuffer.bytesPerSample = globalSecondaryBuffer.bytesPerSample;
+        soundBuffer.size = globalSecondaryBuffer.size;
+        soundBuffer.memory = VirtualAlloc(0, soundBuffer.size, MEM_RESERVE|MEM_COMMIT, PAGE_READWRITE);
         
-        Input newInput = {};
-        Input oldInput = {};
+        Input input = {};
         globalRunning = true;
         while(globalRunning)
         {
-            oldInput = newInput;
+            // NOTE: Update wasPress and wasRelease each frame
+            for(int keyIndex = 0;
+                keyIndex < NUM_OF_KEYS;
+                ++keyIndex)
+            {
+                input.keys[keyIndex].wasPress = false;
+                input.keys[keyIndex].wasRelease = false;
+            }
 
             MSG message;
             while(PeekMessage(&message, window, 0, 0, PM_REMOVE))
@@ -439,26 +428,25 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR pCmdLine, int nCmdSh
                         {
                             if(VKCode == 'W')
                             {
-                                newInput.W.isDown = isDown;
+                                Win32ProcessKey(&input.W, isDown, wasDown);
                             }
                             if(VKCode == 'S')
                             {
-                                newInput.S.isDown = isDown;
+                                Win32ProcessKey(&input.S, isDown, wasDown);
                             }
                             if(VKCode == 'A')
                             {
-                                newInput.A.isDown = isDown;
+                                Win32ProcessKey(&input.A, isDown, wasDown);
                             }
                             if(VKCode == 'D')
                             {
-                                newInput.D.isDown = isDown;
+                                Win32ProcessKey(&input.D, isDown, wasDown);
                             }
                             if(VKCode == VK_SPACE)
                             {
-                                newInput.Space.isDown = isDown;
+                                Win32ProcessKey(&input.Space, isDown, wasDown);
                             }
                         }
-
                     }break;
                     default:
                     {
@@ -467,15 +455,15 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR pCmdLine, int nCmdSh
                     }break;
                 }
             }
-
-            Win32ProcessKeyboard(&newInput.W, &oldInput.W);
-            Win32ProcessKeyboard(&newInput.S, &oldInput.S);
-            Win32ProcessKeyboard(&newInput.A, &oldInput.A);
-            Win32ProcessKeyboard(&newInput.D, &oldInput.D);
-            Win32ProcessKeyboard(&newInput.Space, &oldInput.Space);
             
-            // TODO: Get mouse position and mouse buttons here
-            // Use keyboard state for simplicity
+            BackBuffer backBuffer = {};
+            backBuffer.width = globalBackBuffer.width;
+            backBuffer.height = globalBackBuffer.height;
+            backBuffer.bytesPerPixel = globalBackBuffer.bytesPerPixel;
+            backBuffer.pitch = globalBackBuffer.pitch;
+            backBuffer.memory = globalBackBuffer.memory;
+             
+            GameUpdateAndRender(&backBuffer, &soundBuffer, &input, &gameMemory, targetSecPerFrame);
 
             DWORD playCursor;
             DWORD writeCursor;
@@ -498,28 +486,9 @@ WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR pCmdLine, int nCmdSh
                 {
                     bytesToWrite = targetCursor - byteToLock;
                 }
-                Win32FillSoundBuffer(&globalSecondaryBuffer, byteToLock, bytesToWrite, &runningSampleIndex);
-                Win32DrawBackBufferPatron(&globalBackBuffer);
-                Win32DrawSoundDebufInfo(&DEBUGSoundInfo, byteToLock, bytesToWrite, playCursor, writeCursor);
+                Win32FillSoundBuffer(&globalSecondaryBuffer, byteToLock, bytesToWrite, &soundBuffer, &runningSampleIndex);
             }
             
-           
-            // TODO: Remove this keyboard test
-            {
-                if(newInput.A.wasPress)
-                {
-                    OutputDebugString("A was Press\n");
-                }
-                if(newInput.A.wasRelease)
-                {
-                    OutputDebugString("A was Release\n");
-                }
-                if(newInput.A.isDown)
-                {
-                    OutputDebugString("A is down\n");
-                }
-            }
-
             // TODO: Probably get the target secons per frame from this calculation
             LARGE_INTEGER currentTime = Win32GetWallClock();
             r32 currentSecPerFrame = Win32GetSecondsElapsed(lastTime, currentTime); 
